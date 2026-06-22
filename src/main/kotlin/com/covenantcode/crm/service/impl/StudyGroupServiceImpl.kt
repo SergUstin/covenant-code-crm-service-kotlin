@@ -1,5 +1,6 @@
 package com.covenantcode.crm.service.impl
 
+import com.covenantcode.crm.dto.group.AddStudentToGroupRequest
 import com.covenantcode.crm.dto.group.GroupStatusUpdateRequest
 import com.covenantcode.crm.dto.group.StudyGroupCreateRequest
 import com.covenantcode.crm.dto.group.StudyGroupResponse
@@ -9,7 +10,9 @@ import com.covenantcode.crm.entity.User
 import com.covenantcode.crm.entity.enums.GroupStatus
 import com.covenantcode.crm.entity.enums.RoleName
 import com.covenantcode.crm.exception.BadRequestException
+import com.covenantcode.crm.exception.ConflictException
 import com.covenantcode.crm.exception.ResourceNotFoundException
+import com.covenantcode.crm.dto.student.StudentResponse
 import com.covenantcode.crm.mapper.toResponse
 import com.covenantcode.crm.repository.CourseRepository
 import com.covenantcode.crm.repository.StudentRepository
@@ -39,6 +42,18 @@ class StudyGroupServiceImpl(
     private val userRepository: UserRepository,
     private val studentRepository: StudentRepository,
 ) : StudyGroupService {
+
+    @Transactional(readOnly = true)
+    override fun getStudentsOfGroup(groupId: Long, currentUser: User): List<StudentResponse> {
+        val group = studyGroupRepository.findByIdOrNull(groupId)
+            ?: throw ResourceNotFoundException("StudyGroup", groupId)
+
+        if (currentUser.role.name == RoleName.TEACHER && group.teacher.id != currentUser.id) {
+            throw AccessDeniedException("Access Denied")
+        }
+
+        return group.students.map { it.toResponse() }
+    }
 
     @Transactional(readOnly = true)
     override fun getById(id: Long, currentUser: User): StudyGroupResponse {
@@ -91,6 +106,46 @@ class StudyGroupServiceImpl(
         group.startDate = request.startDate!!
 
         return studyGroupRepository.save(group).toResponse()
+    }
+
+    @Transactional
+    override fun addStudent(groupId: Long, request: AddStudentToGroupRequest): StudyGroupResponse {
+        val group = studyGroupRepository.findByIdOrNull(groupId)
+            ?: throw ResourceNotFoundException("StudyGroup", groupId)
+
+        if (group.status == GroupStatus.COMPLETED || group.status == GroupStatus.CANCELLED) {
+            throw BadRequestException("Нельзя добавить студента в группу в статусе ${group.status}")
+        }
+
+        val student = studentRepository.findByIdOrNull(request.studentId!!)
+            ?: throw ResourceNotFoundException("Student", request.studentId)
+
+        if (group.students.contains(student)) {
+            throw ConflictException("Студент с id ${request.studentId} уже состоит в этой группе")
+        }
+
+        group.students.add(student)
+        return studyGroupRepository.save(group).toResponse()
+    }
+
+    @Transactional
+    override fun removeStudent(groupId: Long, studentId: Long) {
+        val group = studyGroupRepository.findByIdOrNull(groupId)
+            ?: throw ResourceNotFoundException("StudyGroup", groupId)
+
+        if (group.status == GroupStatus.COMPLETED) {
+            throw BadRequestException("Нельзя удалить студента из группы в статусе COMPLETED")
+        }
+
+        val student = studentRepository.findByIdOrNull(studentId)
+            ?: throw ResourceNotFoundException("Student", studentId)
+
+        if (!group.students.contains(student)) {
+            throw BadRequestException("Студент с id $studentId не состоит в этой группе")
+        }
+
+        group.students.remove(student)
+        studyGroupRepository.save(group)
     }
 
     @Transactional

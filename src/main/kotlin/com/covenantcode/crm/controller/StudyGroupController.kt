@@ -1,5 +1,7 @@
 package com.covenantcode.crm.controller
 
+import com.covenantcode.crm.dto.group.AddStudentToGroupRequest
+import com.covenantcode.crm.dto.student.StudentResponse
 import com.covenantcode.crm.dto.group.GroupStatusUpdateRequest
 import com.covenantcode.crm.dto.group.StudyGroupCreateRequest
 import com.covenantcode.crm.dto.group.StudyGroupResponse
@@ -19,6 +21,7 @@ import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PatchMapping
@@ -91,6 +94,52 @@ class StudyGroupController(private val studyGroupService: StudyGroupService) {
         @PathVariable id: Long,
         @Valid @RequestBody request: StudyGroupUpdateRequest,
     ): StudyGroupResponse = studyGroupService.update(id, request)
+
+    @PostMapping("/{id}/students")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @Operation(summary = "Добавить студента в группу (ADMIN, MANAGER)")
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Студент добавлен"),
+        ApiResponse(responseCode = "400", description = "Группа в финальном статусе или ошибка валидации"),
+        ApiResponse(responseCode = "401", description = "Токен отсутствует или невалиден"),
+        ApiResponse(responseCode = "403", description = "Недостаточно прав"),
+        ApiResponse(responseCode = "404", description = "Группа или студент не найдены"),
+        ApiResponse(responseCode = "409", description = "Студент уже состоит в этой группе"),
+    )
+    fun addStudent(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: AddStudentToGroupRequest,
+    ): StudyGroupResponse = studyGroupService.addStudent(id, request)
+
+    @GetMapping("/{id}/students")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'TEACHER')")
+    @Operation(summary = "Список студентов группы (ADMIN, MANAGER — любой; TEACHER — только своей)")
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Список студентов"),
+        ApiResponse(responseCode = "401", description = "Токен отсутствует или невалиден"),
+        ApiResponse(responseCode = "403", description = "Нет прав доступа"),
+        ApiResponse(responseCode = "404", description = "Группа не найдена"),
+    )
+    fun getStudentsOfGroup(
+        @PathVariable id: Long,
+        @AuthenticationPrincipal currentUser: User,
+    ): List<StudentResponse> = studyGroupService.getStudentsOfGroup(id, currentUser)
+
+    @DeleteMapping("/{id}/students/{studentId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @Operation(summary = "Удалить студента из группы (ADMIN, MANAGER)")
+    @ApiResponses(
+        ApiResponse(responseCode = "204", description = "Студент удалён"),
+        ApiResponse(responseCode = "400", description = "Студент не в группе или группа завершена"),
+        ApiResponse(responseCode = "401", description = "Токен отсутствует или невалиден"),
+        ApiResponse(responseCode = "403", description = "Недостаточно прав"),
+        ApiResponse(responseCode = "404", description = "Группа или студент не найдены"),
+    )
+    fun removeStudent(
+        @PathVariable id: Long,
+        @PathVariable studentId: Long,
+    ) = studyGroupService.removeStudent(id, studentId)
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

@@ -20,6 +20,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
@@ -468,5 +469,269 @@ class StudyGroupControllerIntegrationTest : BaseIntegrationTest() {
         )
             .andExpect(status().isNotFound)
             .andExpect(jsonPath("$.type").value("resource-not-found"))
+    }
+
+    // ─── POST /api/v1/groups/{id}/students ───────────────────────────────────
+
+    @Test
+    fun `POST groups id students - успешное добавление - 200 студент в списке`() {
+        registerWithRole("teacher_as1@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_as1@group.test" }
+        val course = saveCourse()
+        val group = saveGroup("Группа", course, teacher)
+        val student = saveStudent("Вера")
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            post("/api/v1/groups/${group.id}/students")
+                .header("Authorization", "Bearer $adminToken")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"studentId":${student.id}}""")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.students[0].id").value(student.id))
+    }
+
+    @Test
+    fun `POST groups id students - студент уже в группе - 409 conflict`() {
+        registerWithRole("teacher_as2@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_as2@group.test" }
+        val course = saveCourse()
+        val student = saveStudent("Алиса")
+        val group = studyGroupRepository.save(StudyGroup().apply {
+            name = "Группа"
+            this.course = course
+            this.teacher = teacher
+            status = GroupStatus.DRAFT
+            students = mutableSetOf(student)
+        })
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            post("/api/v1/groups/${group.id}/students")
+                .header("Authorization", "Bearer $adminToken")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"studentId":${student.id}}""")
+        )
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.type").value("conflict"))
+    }
+
+    @Test
+    fun `POST groups id students - группа COMPLETED - 400 bad-request`() {
+        registerWithRole("teacher_as3@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_as3@group.test" }
+        val group = saveGroup("Группа", saveCourse(), teacher, GroupStatus.COMPLETED)
+        val student = saveStudent("Борис")
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            post("/api/v1/groups/${group.id}/students")
+                .header("Authorization", "Bearer $adminToken")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"studentId":${student.id}}""")
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.type").value("bad-request"))
+    }
+
+    @Test
+    fun `POST groups id students - TEACHER не может добавить студента - 403`() {
+        val teacherToken = registerWithRole("teacher_as4@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_as4@group.test" }
+        val group = saveGroup("Группа", saveCourse(), teacher)
+        val student = saveStudent("Студент")
+
+        mockMvc.perform(
+            post("/api/v1/groups/${group.id}/students")
+                .header("Authorization", "Bearer $teacherToken")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"studentId":${student.id}}""")
+        ).andExpect(status().isForbidden)
+    }
+
+    // ─── DELETE /api/v1/groups/{id}/students/{studentId} ─────────────────────
+
+    @Test
+    fun `DELETE groups id students studentId - успешное удаление - 204 студента нет в БД`() {
+        registerWithRole("teacher_rs1@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_rs1@group.test" }
+        val student = saveStudent("Алиса")
+        val group = studyGroupRepository.save(StudyGroup().apply {
+            name = "Группа"
+            course = saveCourse()
+            this.teacher = teacher
+            status = GroupStatus.DRAFT
+            students = mutableSetOf(student)
+        })
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            delete("/api/v1/groups/${group.id}/students/${student.id}")
+                .header("Authorization", "Bearer $adminToken")
+        ).andExpect(status().isNoContent)
+
+        mockMvc.perform(
+            get("/api/v1/groups/${group.id}").header("Authorization", "Bearer $adminToken")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.students[?(@.id == ${student.id})]").doesNotExist())
+    }
+
+    @Test
+    fun `DELETE groups id students studentId - студент не в группе - 400 bad-request`() {
+        registerWithRole("teacher_rs2@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_rs2@group.test" }
+        val group = saveGroup("Группа", saveCourse(), teacher)
+        val student = saveStudent("Борис")
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            delete("/api/v1/groups/${group.id}/students/${student.id}")
+                .header("Authorization", "Bearer $adminToken")
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.type").value("bad-request"))
+    }
+
+    @Test
+    fun `DELETE groups id students studentId - группа COMPLETED - 400 bad-request`() {
+        registerWithRole("teacher_rs3@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_rs3@group.test" }
+        val student = saveStudent("Вера")
+        val group = studyGroupRepository.save(StudyGroup().apply {
+            name = "Группа"
+            course = saveCourse()
+            this.teacher = teacher
+            status = GroupStatus.COMPLETED
+            students = mutableSetOf(student)
+        })
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            delete("/api/v1/groups/${group.id}/students/${student.id}")
+                .header("Authorization", "Bearer $adminToken")
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.type").value("bad-request"))
+    }
+
+    @Test
+    fun `DELETE groups id students studentId - TEACHER не может удалить - 403`() {
+        val teacherToken = registerWithRole("teacher_rs4@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_rs4@group.test" }
+        val student = saveStudent("Григорий")
+        val group = studyGroupRepository.save(StudyGroup().apply {
+            name = "Группа"
+            course = saveCourse()
+            this.teacher = teacher
+            status = GroupStatus.DRAFT
+            students = mutableSetOf(student)
+        })
+
+        mockMvc.perform(
+            delete("/api/v1/groups/${group.id}/students/${student.id}")
+                .header("Authorization", "Bearer $teacherToken")
+        ).andExpect(status().isForbidden)
+    }
+
+    @Test
+    fun `DELETE groups id students studentId - группа не найдена - 404`() {
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            delete("/api/v1/groups/9999/students/1")
+                .header("Authorization", "Bearer $adminToken")
+        )
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.type").value("resource-not-found"))
+    }
+
+    // ─── GET /api/v1/groups/{id}/students ────────────────────────────────────
+
+    @Test
+    fun `GET groups id students - ADMIN - 200 список двух студентов`() {
+        registerWithRole("teacher_gs1@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_gs1@group.test" }
+        val s1 = saveStudent("Алиса")
+        val s2 = saveStudent("Борис")
+        val group = studyGroupRepository.save(StudyGroup().apply {
+            name = "Группа"; course = saveCourse(); this.teacher = teacher
+            status = GroupStatus.DRAFT; students = mutableSetOf(s1, s2)
+        })
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            get("/api/v1/groups/${group.id}/students").header("Authorization", "Bearer $adminToken")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[0].firstName").exists())
+    }
+
+    @Test
+    fun `GET groups id students - TEACHER своя группа - 200`() {
+        val teacherToken = registerWithRole("teacher_gs2@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_gs2@group.test" }
+        val student = saveStudent("Вера")
+        val group = studyGroupRepository.save(StudyGroup().apply {
+            name = "Группа"; course = saveCourse(); this.teacher = teacher
+            status = GroupStatus.DRAFT; students = mutableSetOf(student)
+        })
+
+        mockMvc.perform(
+            get("/api/v1/groups/${group.id}/students").header("Authorization", "Bearer $teacherToken")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(1))
+    }
+
+    @Test
+    fun `GET groups id students - TEACHER чужая группа - 403`() {
+        registerWithRole("teacher_gs3a@group.test", RoleName.TEACHER)
+        val owner = userRepository.findAll().first { it.email == "teacher_gs3a@group.test" }
+        val group = saveGroup("Группа", saveCourse(), owner)
+        val otherTeacherToken = registerWithRole("teacher_gs3b@group.test", RoleName.TEACHER)
+
+        mockMvc.perform(
+            get("/api/v1/groups/${group.id}/students").header("Authorization", "Bearer $otherTeacherToken")
+        ).andExpect(status().isForbidden)
+    }
+
+    @Test
+    fun `GET groups id students - STUDENT не имеет доступа - 403`() {
+        registerWithRole("teacher_gs4@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_gs4@group.test" }
+        val group = saveGroup("Группа", saveCourse(), teacher)
+        val studentToken = registerWithRole("student_gs4@group.test", RoleName.STUDENT)
+
+        mockMvc.perform(
+            get("/api/v1/groups/${group.id}/students").header("Authorization", "Bearer $studentToken")
+        ).andExpect(status().isForbidden)
+    }
+
+    @Test
+    fun `GET groups id students - группа не найдена - 404`() {
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            get("/api/v1/groups/9999/students").header("Authorization", "Bearer $adminToken")
+        )
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.type").value("resource-not-found"))
+    }
+
+    @Test
+    fun `GET groups id students - пустая группа - 200 пустой список`() {
+        registerWithRole("teacher_gs5@group.test", RoleName.TEACHER)
+        val teacher = userRepository.findAll().first { it.email == "teacher_gs5@group.test" }
+        val group = saveGroup("Группа", saveCourse(), teacher)
+        val adminToken = loginAndGetToken("admin@covenantcode.ru", "Admin123!")
+
+        mockMvc.perform(
+            get("/api/v1/groups/${group.id}/students").header("Authorization", "Bearer $adminToken")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(0))
     }
 }

@@ -1,5 +1,6 @@
 package com.covenantcode.crm.service
 
+import com.covenantcode.crm.dto.group.AddStudentToGroupRequest
 import com.covenantcode.crm.dto.group.GroupStatusUpdateRequest
 import com.covenantcode.crm.dto.group.StudyGroupCreateRequest
 import com.covenantcode.crm.dto.group.StudyGroupUpdateRequest
@@ -11,6 +12,7 @@ import com.covenantcode.crm.entity.User
 import com.covenantcode.crm.entity.enums.GroupStatus
 import com.covenantcode.crm.entity.enums.RoleName
 import com.covenantcode.crm.exception.BadRequestException
+import com.covenantcode.crm.exception.ConflictException
 import com.covenantcode.crm.exception.ResourceNotFoundException
 import org.mockito.kotlin.never
 import org.springframework.security.access.AccessDeniedException
@@ -408,5 +410,246 @@ class StudyGroupServiceImplTest {
 
         assertThatThrownBy { studyGroupService.updateStatus(99L, GroupStatusUpdateRequest(GroupStatus.ACTIVE)) }
             .isInstanceOf(ResourceNotFoundException::class.java)
+    }
+
+    // ─── addStudent ───────────────────────────────────────────────────────────
+
+    private fun addStudentRequest(studentId: Long = 10L) = AddStudentToGroupRequest(studentId = studentId)
+
+    @Test
+    fun `addStudent - DRAFT группа студент не в группе - студент добавлен`() {
+        val course = makeCourse()
+        val teacher = makeUser()
+        val student = makeStudent(10L)
+        val group = savedGroup(course, teacher)
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+        whenever(studentRepository.findById(10L)).thenReturn(Optional.of(student))
+        whenever(studyGroupRepository.save(any<StudyGroup>())).thenAnswer { it.arguments[0] as StudyGroup }
+
+        val result = studyGroupService.addStudent(1L, addStudentRequest())
+
+        assertThat(result.students).anyMatch { it.id == 10L }
+        verify(studyGroupRepository).save(any<StudyGroup>())
+    }
+
+    @Test
+    fun `addStudent - ACTIVE группа - студент добавлен успешно`() {
+        val student = makeStudent(10L)
+        val group = savedGroup(makeCourse(), makeUser()).also { it.status = GroupStatus.ACTIVE }
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+        whenever(studentRepository.findById(10L)).thenReturn(Optional.of(student))
+        whenever(studyGroupRepository.save(any<StudyGroup>())).thenAnswer { it.arguments[0] as StudyGroup }
+
+        val result = studyGroupService.addStudent(1L, addStudentRequest())
+
+        assertThat(result.students).anyMatch { it.id == 10L }
+    }
+
+    @Test
+    fun `addStudent - группа не найдена - ResourceNotFoundException`() {
+        whenever(studyGroupRepository.findById(99L)).thenReturn(Optional.empty())
+
+        assertThatThrownBy { studyGroupService.addStudent(99L, addStudentRequest()) }
+            .isInstanceOf(ResourceNotFoundException::class.java)
+            .hasMessageContaining("StudyGroup")
+    }
+
+    @Test
+    fun `addStudent - студент не найден - ResourceNotFoundException`() {
+        val group = savedGroup(makeCourse(), makeUser())
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+        whenever(studentRepository.findById(99L)).thenReturn(Optional.empty())
+
+        assertThatThrownBy { studyGroupService.addStudent(1L, addStudentRequest(studentId = 99L)) }
+            .isInstanceOf(ResourceNotFoundException::class.java)
+            .hasMessageContaining("Student")
+    }
+
+    @Test
+    fun `addStudent - студент уже в группе - ConflictException`() {
+        val student = makeStudent(10L)
+        val group = savedGroup(makeCourse(), makeUser(), mutableSetOf(student))
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+        whenever(studentRepository.findById(10L)).thenReturn(Optional.of(student))
+
+        assertThatThrownBy { studyGroupService.addStudent(1L, addStudentRequest()) }
+            .isInstanceOf(ConflictException::class.java)
+            .hasMessageContaining("10")
+    }
+
+    @Test
+    fun `addStudent - группа COMPLETED - BadRequestException`() {
+        val group = savedGroup(makeCourse(), makeUser()).also { it.status = GroupStatus.COMPLETED }
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+
+        assertThatThrownBy { studyGroupService.addStudent(1L, addStudentRequest()) }
+            .isInstanceOf(BadRequestException::class.java)
+            .hasMessageContaining("COMPLETED")
+    }
+
+    @Test
+    fun `addStudent - группа CANCELLED - BadRequestException`() {
+        val group = savedGroup(makeCourse(), makeUser()).also { it.status = GroupStatus.CANCELLED }
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+
+        assertThatThrownBy { studyGroupService.addStudent(1L, addStudentRequest()) }
+            .isInstanceOf(BadRequestException::class.java)
+            .hasMessageContaining("CANCELLED")
+    }
+
+    // ─── removeStudent ────────────────────────────────────────────────────────
+
+    @Test
+    fun `removeStudent - DRAFT группа студент в группе - студент удалён`() {
+        val student = makeStudent(10L)
+        val group = savedGroup(makeCourse(), makeUser(), mutableSetOf(student))
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+        whenever(studentRepository.findById(10L)).thenReturn(Optional.of(student))
+        whenever(studyGroupRepository.save(any<StudyGroup>())).thenAnswer { it.arguments[0] as StudyGroup }
+
+        studyGroupService.removeStudent(1L, 10L)
+
+        assertThat(group.students).doesNotContain(student)
+        verify(studyGroupRepository).save(group)
+    }
+
+    @Test
+    fun `removeStudent - ACTIVE группа - студент удалён успешно`() {
+        val student = makeStudent(10L)
+        val group = savedGroup(makeCourse(), makeUser(), mutableSetOf(student)).also { it.status = GroupStatus.ACTIVE }
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+        whenever(studentRepository.findById(10L)).thenReturn(Optional.of(student))
+        whenever(studyGroupRepository.save(any<StudyGroup>())).thenAnswer { it.arguments[0] as StudyGroup }
+
+        studyGroupService.removeStudent(1L, 10L)
+
+        assertThat(group.students).doesNotContain(student)
+    }
+
+    @Test
+    fun `removeStudent - CANCELLED группа - студент удалён успешно`() {
+        val student = makeStudent(10L)
+        val group = savedGroup(makeCourse(), makeUser(), mutableSetOf(student)).also { it.status = GroupStatus.CANCELLED }
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+        whenever(studentRepository.findById(10L)).thenReturn(Optional.of(student))
+        whenever(studyGroupRepository.save(any<StudyGroup>())).thenAnswer { it.arguments[0] as StudyGroup }
+
+        studyGroupService.removeStudent(1L, 10L)
+
+        assertThat(group.students).doesNotContain(student)
+    }
+
+    @Test
+    fun `removeStudent - COMPLETED группа - BadRequestException save не вызывался`() {
+        val group = savedGroup(makeCourse(), makeUser()).also { it.status = GroupStatus.COMPLETED }
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+
+        assertThatThrownBy { studyGroupService.removeStudent(1L, 10L) }
+            .isInstanceOf(BadRequestException::class.java)
+            .hasMessageContaining("COMPLETED")
+        verify(studyGroupRepository, never()).save(any<StudyGroup>())
+    }
+
+    @Test
+    fun `removeStudent - группа не найдена - ResourceNotFoundException`() {
+        whenever(studyGroupRepository.findById(99L)).thenReturn(Optional.empty())
+
+        assertThatThrownBy { studyGroupService.removeStudent(99L, 10L) }
+            .isInstanceOf(ResourceNotFoundException::class.java)
+            .hasMessageContaining("StudyGroup")
+    }
+
+    @Test
+    fun `removeStudent - студент не найден - ResourceNotFoundException`() {
+        val group = savedGroup(makeCourse(), makeUser())
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+        whenever(studentRepository.findById(99L)).thenReturn(Optional.empty())
+
+        assertThatThrownBy { studyGroupService.removeStudent(1L, 99L) }
+            .isInstanceOf(ResourceNotFoundException::class.java)
+            .hasMessageContaining("Student")
+    }
+
+    @Test
+    fun `removeStudent - студент не состоит в группе - BadRequestException`() {
+        val student = makeStudent(10L)
+        val group = savedGroup(makeCourse(), makeUser())
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+        whenever(studentRepository.findById(10L)).thenReturn(Optional.of(student))
+
+        assertThatThrownBy { studyGroupService.removeStudent(1L, 10L) }
+            .isInstanceOf(BadRequestException::class.java)
+            .hasMessageContaining("10")
+    }
+
+    // ─── getStudentsOfGroup ───────────────────────────────────────────────────
+
+    @Test
+    fun `getStudentsOfGroup - ADMIN - возвращает список студентов`() {
+        val admin = makeUser(1L, RoleName.ADMIN)
+        val s1 = makeStudent(10L)
+        val s2 = makeStudent(11L)
+        val group = savedGroup(makeCourse(), makeUser(2L), mutableSetOf(s1, s2))
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+
+        val result = studyGroupService.getStudentsOfGroup(1L, admin)
+
+        assertThat(result).hasSize(2)
+    }
+
+    @Test
+    fun `getStudentsOfGroup - MANAGER - возвращает список без проверки учителя`() {
+        val manager = makeUser(1L, RoleName.MANAGER)
+        val student = makeStudent(10L)
+        val group = savedGroup(makeCourse(), makeUser(2L), mutableSetOf(student))
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+
+        val result = studyGroupService.getStudentsOfGroup(1L, manager)
+
+        assertThat(result).hasSize(1)
+        verify(studentRepository, never()).findByUser_Id(any())
+    }
+
+    @Test
+    fun `getStudentsOfGroup - TEACHER своя группа - возвращает список`() {
+        val teacher = makeUser(2L, RoleName.TEACHER)
+        val student = makeStudent(10L)
+        val group = savedGroup(makeCourse(), teacher, mutableSetOf(student))
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+
+        val result = studyGroupService.getStudentsOfGroup(1L, teacher)
+
+        assertThat(result).hasSize(1)
+    }
+
+    @Test
+    fun `getStudentsOfGroup - TEACHER чужая группа - AccessDeniedException`() {
+        val teacher = makeUser(2L, RoleName.TEACHER)
+        val otherTeacher = makeUser(99L, RoleName.TEACHER)
+        val group = savedGroup(makeCourse(), otherTeacher)
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+
+        assertThatThrownBy { studyGroupService.getStudentsOfGroup(1L, teacher) }
+            .isInstanceOf(AccessDeniedException::class.java)
+    }
+
+    @Test
+    fun `getStudentsOfGroup - группа не найдена - ResourceNotFoundException`() {
+        val admin = makeUser(1L, RoleName.ADMIN)
+        whenever(studyGroupRepository.findById(99L)).thenReturn(Optional.empty())
+
+        assertThatThrownBy { studyGroupService.getStudentsOfGroup(99L, admin) }
+            .isInstanceOf(ResourceNotFoundException::class.java)
+    }
+
+    @Test
+    fun `getStudentsOfGroup - группа без студентов - пустой список`() {
+        val admin = makeUser(1L, RoleName.ADMIN)
+        val group = savedGroup(makeCourse(), makeUser(2L))
+        whenever(studyGroupRepository.findById(1L)).thenReturn(Optional.of(group))
+
+        val result = studyGroupService.getStudentsOfGroup(1L, admin)
+
+        assertThat(result).isEmpty()
     }
 }

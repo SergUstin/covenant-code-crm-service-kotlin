@@ -1,9 +1,11 @@
 package com.covenantcode.crm.service
 
+import com.covenantcode.crm.dto.group.AddStudentToGroupRequest
 import com.covenantcode.crm.dto.group.GroupStatusUpdateRequest
 import com.covenantcode.crm.dto.group.StudyGroupCreateRequest
 import com.covenantcode.crm.dto.group.StudyGroupResponse
 import com.covenantcode.crm.dto.group.StudyGroupUpdateRequest
+import com.covenantcode.crm.dto.student.StudentResponse
 import com.covenantcode.crm.entity.User
 import com.covenantcode.crm.entity.enums.GroupStatus
 import org.springframework.data.domain.Page
@@ -13,6 +15,9 @@ interface StudyGroupService {
     fun create(request: StudyGroupCreateRequest): StudyGroupResponse
     fun update(id: Long, request: StudyGroupUpdateRequest): StudyGroupResponse
     fun updateStatus(id: Long, request: GroupStatusUpdateRequest): StudyGroupResponse
+    fun addStudent(groupId: Long, request: AddStudentToGroupRequest): StudyGroupResponse
+    fun removeStudent(groupId: Long, studentId: Long)
+    fun getStudentsOfGroup(groupId: Long, currentUser: User): List<StudentResponse>
     fun getById(id: Long, currentUser: User): StudyGroupResponse
     fun getAll(courseId: Long?, teacherId: Long?, status: GroupStatus?, pageable: Pageable): Page<StudyGroupResponse>
 }
