@@ -22,6 +22,12 @@ build/
 *.tar.gz
 *.rar
 
+# Gradle
+.gradle/
+gradle-app.setting
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
 # Database
 *.db
 *.sqlite

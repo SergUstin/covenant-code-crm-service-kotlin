@@ -1,19 +1,19 @@
-FROM maven:3.9-eclipse-temurin-21-alpine AS builder
+FROM gradle:8.10-jdk21-alpine AS builder
 WORKDIR /app
 
-# Cache dependencies layer separately from source
-COPY pom.xml .
-RUN mvn dependency:go-offline -q
+# Cache dependency resolution separately from source compilation
+COPY build.gradle.kts settings.gradle.kts ./
+RUN gradle dependencies --no-daemon -q 2>/dev/null || true
 
 COPY src ./src
-RUN mvn package -DskipTests -q
+RUN gradle bootJar --no-daemon -q
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
 RUN addgroup -S spring && adduser -S spring -G spring
 
-COPY --from=builder /app/target/*.jar app.jar
+COPY --from=builder /app/build/libs/*.jar app.jar
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 

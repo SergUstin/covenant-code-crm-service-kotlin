@@ -12,11 +12,10 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
         default_schema: public
 
   flyway:
@@ -34,4 +33,3 @@ logging:
     com.covenantcode.crm: DEBUG
     org.springframework.security: DEBUG
     org.flywaydb: INFO
-    org.hibernate.SQL: DEBUG
